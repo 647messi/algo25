@@ -2,11 +2,11 @@
 
 import numpy as np
 import pandas as pd
-from teamName import getMyPosition as getPosition
+from VIVO50 import getMyPosition as getPosition
 
 nInst = 0
 nt = 0
-commRate = 0.0005
+commRate = 0.0010
 dlrPosLimit = 10000
 
 def loadPrices(fn):
@@ -15,7 +15,8 @@ def loadPrices(fn):
     (nt,nInst) = df.shape
     return (df.values).T
 
-pricesFile="./priceSlice_test.txt"
+# Modify the file path as needed
+pricesFile="./prices.txt"
 prcAll = loadPrices(pricesFile)
 print ("Loaded %d instruments for %d days" % (nInst, nt))
 
@@ -64,7 +65,7 @@ def calcPL(prcHist, numTestDays):
 
 
 
-(meanpl, ret, plstd, sharpe, dvol) = calcPL(prcAll,200)
+(meanpl, ret, plstd, sharpe, dvol) = calcPL(prcAll,500)
 score = meanpl - 0.1*plstd
 print ("=====")
 print ("mean(PL): %.1lf" % meanpl)
