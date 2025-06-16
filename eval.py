@@ -6,7 +6,7 @@ from VIVO50 import getMyPosition as getPosition
 
 nInst = 0
 nt = 0
-commRate = 0.0010
+commRate = 0.0005
 dlrPosLimit = 10000
 
 def loadPrices(fn):
@@ -65,7 +65,7 @@ def calcPL(prcHist, numTestDays):
 
 
 
-(meanpl, ret, plstd, sharpe, dvol) = calcPL(prcAll,500)
+(meanpl, ret, plstd, sharpe, dvol) = calcPL(prcAll, 750)
 score = meanpl - 0.1*plstd
 print ("=====")
 print ("mean(PL): %.1lf" % meanpl)
