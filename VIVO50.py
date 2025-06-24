@@ -8,6 +8,21 @@ import pandas as pd
 nInst = 50
 currentPos = np.zeros(nInst)
 ma_signal_history = None
+
+cash_limit = 9000
+commRate = 0.0005
+
+######################################################
+## Backtesting Parameters
+######################################################
+
+nav_history = None  # NAV history
+position_history = None  # Position history
+
+######################################################
+## MA History and Signals
+######################################################
+
 signals = {}
 ma_history = {
     '5': pd.DataFrame(columns=range(nInst)),
@@ -17,13 +32,20 @@ ma_history = {
     '180': pd.DataFrame(columns=range(nInst))
 }
 
-signals['30_180'] = pd.DataFrame(columns=range(nInst))
 
+signals['30_180'] = pd.DataFrame(columns=range(nInst))
+signals['5_20'] = pd.DataFrame(columns=range(nInst))
+signals['30_60'] = pd.DataFrame(columns=range(nInst))
+signals['30_180'] = pd.DataFrame(columns=range(nInst))
+#####################################################
 
 
 def getMyPosition(prcSoFar: np.ndarray) -> np.ndarray:
     # update the position based on the latest prices
-    # currentPos = ma_strategy(prcSoFar, short_window=30, long_window=180, dollar_limit=10000, delay=0)
+    global currentPos, signals, ma_history, nav_history, position_history
+
+    update_trading_logs(prcSoFar)
+
     update_ma_history(prcSoFar)
     update_ma_signal(prcSoFar)
 
@@ -41,56 +63,71 @@ def ma_strategy_using_signals(prcSoFar: np.ndarray, signal_key: str = '30_180', 
 
     return position
 
+def ma_strategy(prcSoFar: np.ndarray) -> np.ndarray:
 
-# def ma_strategy(prcSoFar: np.ndarray, short_window: int = 5, long_window: int = 20, dollar_limit: float = 8000, delay: int = 0) -> np.ndarray:
+    (n_inst, n_days) = prcSoFar.shape
+    global currentPos, signals, ma_history
 
-#     (n_inst, n_days) = prcSoFar.shape
+    final_signal = np.zeros(n_inst)
+    for signal_key in signals.keys():
+        final_signal += signals[signal_key].iloc[-1].values
+
+    # Update current position based on the signal
+    # Use last day prices to estimate the postion
+    last_prices = prcSoFar[:, -1]
+    currentPos += final_signal * (cash_limit / last_prices).astype(int)
+
+    pass
+   
     
+    return currentPos
 
-#     if n_days < long_window+1:
-#         return np.zeros(n_inst)
-    
+#####################################################################################
+# Update trading logs
+#####################################################################################
 
-#     cur_price = prcSoFar[:, -1]
-    
-#     # Calculate the moving average
-#     ma_short = np.mean(prcSoFar[:, -short_window:], axis=1)
-#     ma_long  = np.mean(prcSoFar[:, -long_window:], axis=1)
+def update_trading_logs(prcSoFar: np.ndarray):
+    """
+    Update the trading logs based on the current position and prices.
+    """
+    global position_history, currentPos
 
-#     curr = np.sign(ma_short - ma_long)
+    # Update the position history
+    update_position_history(prcSoFar)
+    # Update NAV history
+    update_nav_history(prcSoFar)
 
-#     # Initialize history signal array
-#     global ma_signal_history
+def update_nav_history(prcSoFar: np.ndarray):
+    """
+    Update the NAV history based on the current position and prices.
+    """
+    global nav_history, position_history
+    # Initialize nav_history if it is None
+    if nav_history is None:
+        nav_history = np.array([])
 
-#     if ma_signal_history is None:
-#         ma_signal_history = np.zeros((n_inst, delay+2))
+    # Calculate the NAV value based on the current position
+    last_prices = prcSoFar[:, -1]
+    last_position = position_history[:, -1]
+    nav_value = np.sum(last_position * last_prices)
 
-#     # Shift the history to the left
-#     ma_signal_history[:, :-1] = ma_signal_history[:, 1:]
-#     ma_signal_history[:, -1] = curr  # t 时刻趋势方向
+    # Update the NAV history
+    nav_history = np.append(nav_history, nav_value)
 
-#     # 判断 t-3 是否是金叉 or 死叉
-#     is_gold_cross  = (ma_signal_history[:, 0] == -1) & (ma_signal_history[:, 1] ==  1)
-#     is_death_cross = (ma_signal_history[:, 0] ==  1) & (ma_signal_history[:, 1] == -1)
+def update_position_history(prcSoFar: np.ndarray):
+    """
+    Update the position history based on the current position.
+    """
+    global position_history, currentPos
+    # If position_history is None, initialize it
+    if position_history is None:
+        position_history = np.array([])
+    # Update the position history
+    position_history = np.append(position_history, currentPos)
 
-#     # 检查 t-2, t-1, t 是否持续维持趋势
-#     gold_trend_held  = np.all(ma_signal_history[:, 2:] == 1, axis=1)
-#     death_trend_held = np.all(ma_signal_history[:, 2:] == -1, axis=1)
-
-#     # 触发建仓
-#     buy_signal  = is_gold_cross  & gold_trend_held
-#     sell_signal = is_death_cross & death_trend_held
-
-#     # 可选过滤震荡区间
-#     # neutral_zone = np.abs(signal_sum) <= 1
-
-#     final_signal = np.zeros(n_inst)
-#     final_signal[buy_signal] = 1
-#     final_signal[sell_signal] = -1
-
-#     position = (final_signal * dollar_limit / cur_price).astype(int)
-    
-#     return position
+######################################################################################
+# Moving Average History and Signals
+######################################################################################
 
 def update_ma_history(prcSoFar: np.array):
     """
@@ -137,6 +174,9 @@ def update_ma_signal(prcSoFar:np.array):
 
         signals[key].loc[len(signals[key])] = signal
 
+#######################################################################################
+# Return functions for history and signals
+#######################################################################################
 
 def get_ma_history():
     """
@@ -149,3 +189,12 @@ def get_ma_signal():
     Get the moving average signals for different windows.
     """
     return signals
+
+def get_trading_logs():
+    """
+    Get the trading logs including NAV and position history.
+    """
+    return {
+        'nav_history': nav_history,
+        'position_history': position_history
+    }
