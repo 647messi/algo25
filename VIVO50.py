@@ -7,6 +7,7 @@ import pandas as pd
 
 nInst = 50
 currentPos = np.zeros(nInst)
+ma_signal_history = None
 signals = {}
 ma_history = {
     '5': pd.DataFrame(columns=range(nInst)),
@@ -16,8 +17,7 @@ ma_history = {
     '180': pd.DataFrame(columns=range(nInst))
 }
 
-ma_30_180_signal = pd.DataFrame(columns=range(nInst))
-signals['30_180'] = ma_30_180_signal
+signals['30_180'] = pd.DataFrame(columns=range(nInst))
 
 
 
@@ -26,7 +26,21 @@ def getMyPosition(prcSoFar: np.ndarray) -> np.ndarray:
     # currentPos = ma_strategy(prcSoFar, short_window=30, long_window=180, dollar_limit=10000, delay=0)
     update_ma_history(prcSoFar)
     update_ma_signal(prcSoFar)
+
+    currentPos = ma_strategy_using_signals(prcSoFar, signal_key='30_180', dollar_limit=10000)
+
     return currentPos
+
+def ma_strategy_using_signals(prcSoFar: np.ndarray, signal_key: str = '30_180', dollar_limit: float = 10000) -> np.ndarray:
+    if len(signals[signal_key]) == 0:
+        return np.zeros(prcSoFar.shape[0])
+
+    latest_signal = signals[signal_key].iloc[-1].values
+    cur_price = prcSoFar[:, -1]
+    position = (latest_signal * dollar_limit / cur_price).astype(int)
+
+    return position
+
 
 # def ma_strategy(prcSoFar: np.ndarray, short_window: int = 5, long_window: int = 20, dollar_limit: float = 8000, delay: int = 0) -> np.ndarray:
 
