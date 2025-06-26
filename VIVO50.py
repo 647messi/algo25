@@ -36,7 +36,6 @@ ma_history = {
 signals['30_180'] = pd.DataFrame(columns=range(nInst))
 signals['5_20'] = pd.DataFrame(columns=range(nInst))
 signals['30_60'] = pd.DataFrame(columns=range(nInst))
-signals['30_180'] = pd.DataFrame(columns=range(nInst))
 #####################################################
 
 
@@ -49,38 +48,83 @@ def getMyPosition(prcSoFar: np.ndarray) -> np.ndarray:
     update_ma_history(prcSoFar)
     update_ma_signal(prcSoFar)
 
-    currentPos = ma_strategy_using_signals(prcSoFar, signal_key='30_180', dollar_limit=10000)
+    # currentPos = ma_strategy_using_signals(prcSoFar, signal_key='30_180', dollar_limit=10000)
+
+    currentPos = ma_strategy(prcSoFar, dollar_limit=cash_limit)
 
     return currentPos
 
-def ma_strategy_using_signals(prcSoFar: np.ndarray, signal_key: str = '30_180', dollar_limit: float = 10000) -> np.ndarray:
-    if len(signals[signal_key]) == 0:
-        return np.zeros(prcSoFar.shape[0])
+# def ma_strategy_using_signals(prcSoFar: np.ndarray, signal_key: str = '30_180', dollar_limit: float = 10000) -> np.ndarray:
+#     if len(signals[signal_key]) == 0:
+#         return np.zeros(prcSoFar.shape[0])
 
-    latest_signal = signals[signal_key].iloc[-1].values
-    cur_price = prcSoFar[:, -1]
-    position = (latest_signal * dollar_limit / cur_price).astype(int)
+#     latest_signal = signals[signal_key].iloc[-1].values
+#     cur_price = prcSoFar[:, -1]
+#     position = (latest_signal * dollar_limit / cur_price).astype(int)
 
-    return position
+#     return position
 
-def ma_strategy(prcSoFar: np.ndarray) -> np.ndarray:
-
-    (n_inst, n_days) = prcSoFar.shape
+def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 10000) -> np.ndarray:
     global currentPos, signals, ma_history
 
-    final_signal = np.zeros(n_inst)
-    for signal_key in signals.keys():
-        final_signal += signals[signal_key].iloc[-1].values
+    (n_inst, n_days) = prcSoFar.shape
+    last_prices = prcSoFar[:, -1]
+    
+
+    # Get signals
+
+    # all_signals = []
+    # for signal_key in signals:
+    #     if len(signals[signal_key]) > 0:
+    #         all_signals.append(signals[signal_key].iloc[-1].values)
+    # all_signals = np.array(all_signals)
+
+    # final_signal = np.zeros(n_inst)
+    # for signal_key in signals.keys():
+    #     final_signal += signals[signal_key].iloc[-1].values
+
+    all_signals = np.array([
+        signals[key].iloc[-1].values for key in signals if len(signals[key]) > 0
+    ])
+
+    max_signal = np.max(all_signals, axis=0)
+    min_signal = np.min(all_signals, axis=0)
 
     # Update current position based on the signal
     # Use last day prices to estimate the postion
-    last_prices = prcSoFar[:, -1]
-    currentPos += final_signal * (cash_limit / last_prices).astype(int)
+    # currentPos += final_signal * (dollar_limit / last_prices).astype(int)
 
-    pass
-   
-    
-    return currentPos
+    new_position = currentPos.copy()
+
+    unit = (dollar_limit / last_prices).astype(int)
+
+    # 做空：如果 min_signal == -1
+    short_mask = (min_signal == -1)
+    long_mask = (max_signal == 1)
+
+    # 如果当前是多仓 → 清仓并做空
+    reverse_mask = short_mask & (currentPos > 0)
+    new_position[reverse_mask] = -unit[reverse_mask]
+
+    # 如果已经是空仓 → 继续加空
+    add_short_mask = short_mask & (currentPos <= 0)
+    new_position[add_short_mask] -= unit[add_short_mask]
+
+    # 做多：加仓（包括之前是多仓或空仓时直接加）
+    new_position[long_mask] += unit[long_mask]
+
+    return new_position
+
+    # resultPosition = np.zeros(n_inst)
+    # if np.any(all_signals == -1):
+    #     signal = -1 * np.ones(n_inst)
+    #     resultPosition = (signal * dollar_limit / last_prices).astype(int)
+    # elif np.any(all_signals == 1):
+    #     signal = 1 * np.ones(n_inst)
+    #     resultPosition = (signal * dollar_limit / last_prices).astype(int)
+    # else:
+    #     resultPosition = currentPos
+    # return resultPosition
 
 #####################################################################################
 # Update trading logs
@@ -121,9 +165,10 @@ def update_position_history(prcSoFar: np.ndarray):
     global position_history, currentPos
     # If position_history is None, initialize it
     if position_history is None:
-        position_history = np.array([])
+        position_history = np.empty((prcSoFar.shape[0], 0))
     # Update the position history
-    position_history = np.append(position_history, currentPos)
+    currentPos_col = currentPos.reshape(-1, 1)
+    position_history = np.hstack((position_history, currentPos_col))
 
 ######################################################################################
 # Moving Average History and Signals
