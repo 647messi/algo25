@@ -9,15 +9,19 @@ nInst = 50
 currentPos = np.zeros(nInst)
 ma_signal_history = None
 
-cash_limit = 9000
+cash_limit = 5000
 commRate = 0.0005
+dollor_position_limit = 10000
 
 ######################################################
 ## Backtesting Parameters
 ######################################################
 
-nav_history = None  # NAV history
-position_history = None  # Position history
+trading_logs = {
+    'cash_history':  pd.DataFrame(columns=range(nInst)),
+    'position_history': pd.DataFrame(columns=range(nInst)),
+    'volume_history': pd.DataFrame(columns=range(nInst))
+}
 
 ######################################################
 ## MA History and Signals
@@ -26,25 +30,22 @@ position_history = None  # Position history
 signals = {}
 ma_history = {
     '5': pd.DataFrame(columns=range(nInst)),
+    '10': pd.DataFrame(columns=range(nInst)),
     '20': pd.DataFrame(columns=range(nInst)),
     '30': pd.DataFrame(columns=range(nInst)),
     '60': pd.DataFrame(columns=range(nInst)),
     '180': pd.DataFrame(columns=range(nInst))
 }
 
-
-signals['30_180'] = pd.DataFrame(columns=range(nInst))
 signals['5_20'] = pd.DataFrame(columns=range(nInst))
+signals['10_60'] = pd.DataFrame(columns=range(nInst))
 signals['30_60'] = pd.DataFrame(columns=range(nInst))
 #####################################################
 
 
 def getMyPosition(prcSoFar: np.ndarray) -> np.ndarray:
     # update the position based on the latest prices
-    global currentPos, signals, ma_history, nav_history, position_history
-
-    update_trading_logs(prcSoFar)
-
+    global currentPos, signals, ma_history, trading_logs
     update_ma_history(prcSoFar)
     update_ma_signal(prcSoFar)
 
@@ -134,41 +135,50 @@ def update_trading_logs(prcSoFar: np.ndarray):
     """
     Update the trading logs based on the current position and prices.
     """
-    global position_history, currentPos
+    global trading_logs, currentPos
 
     # Update the position history
     update_position_history(prcSoFar)
-    # Update NAV history
-    update_nav_history(prcSoFar)
-
-def update_nav_history(prcSoFar: np.ndarray):
-    """
-    Update the NAV history based on the current position and prices.
-    """
-    global nav_history, position_history
-    # Initialize nav_history if it is None
-    if nav_history is None:
-        nav_history = np.array([])
-
-    # Calculate the NAV value based on the current position
-    last_prices = prcSoFar[:, -1]
-    last_position = position_history[:, -1]
-    nav_value = np.sum(last_position * last_prices)
-
-    # Update the NAV history
-    nav_history = np.append(nav_history, nav_value)
+    # Update cash history
+    update_cash_history(prcSoFar)
 
 def update_position_history(prcSoFar: np.ndarray):
     """
     Update the position history based on the current position.
     """
-    global position_history, currentPos
-    # If position_history is None, initialize it
-    if position_history is None:
-        position_history = np.empty((prcSoFar.shape[0], 0))
+    global trading_logs, currentPos
+
     # Update the position history
-    currentPos_col = currentPos.reshape(-1, 1)
-    position_history = np.hstack((position_history, currentPos_col))
+    trading_logs['position_history'].loc[len(trading_logs['position_history'])] = currentPos
+
+def update_cash_history(prcSoFar: np.ndarray):
+    """
+    Update the NAV history based on the current position and prices.
+    """
+    global trading_logs, currentPos
+    if len(trading_logs['position_history']) < 2:
+    # 初始化第一天：仓位差为 pos[1] - pos[0]，但无法计算净值
+        trading_logs['cash_history'].loc[len(trading_logs['cash_history'])] = np.zeros(nInst)
+        return
+    # Calculate the cash based on the current position
+
+    price_t1 = prcSoFar[:, -1]
+    position_t2 = trading_logs['position_history'].iloc[-2]
+    position_t1 = trading_logs['position_history'].iloc[-1]
+
+    delta_position = position_t1 - position_t2
+    delta_volume = np.abs(price_t1 * delta_position)
+
+    trading_logs['volume_history'].loc[len(trading_logs['volume_history'])] = delta_volume
+
+    commission_fee = delta_volume * commRate
+    cash_t2 = trading_logs['cash_history'].iloc[-1]
+
+    trading_logs['cash_history'].loc[len(trading_logs['cash_history'])] = cash_t2 - delta_position * price_t1 - commission_fee
+
+
+
+
 
 ######################################################################################
 # Moving Average History and Signals
@@ -239,7 +249,24 @@ def get_trading_logs():
     """
     Get the trading logs including NAV and position history.
     """
-    return {
-        'nav_history': nav_history,
-        'position_history': position_history
-    }
+    return trading_logs
+
+########################################################################################
+# Reset functions
+########################################################################################
+
+def reset_logs():
+    global currentPos, trading_logs, ma_history, signals, ma_signal_history
+
+    currentPos = np.zeros(nInst)
+
+    for key in trading_logs:
+        trading_logs[key] = pd.DataFrame(columns=range(nInst))
+
+    for key in ma_history:
+        ma_history[key] = pd.DataFrame(columns=range(nInst))
+
+    for key in signals:
+        signals[key] = pd.DataFrame(columns=range(nInst))
+
+    ma_signal_history = None
