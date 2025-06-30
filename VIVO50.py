@@ -8,10 +8,11 @@ import pandas as pd
 nInst = 50
 currentPos = np.zeros(nInst)
 ma_signal_history = None
+ma_stock_id = [2,5,8,15,16,18,29,30,34,41,46]
 
-cash_limit = 5000
+cash_limit = 2000
 commRate = 0.0005
-dollor_position_limit = 10000
+dollar_position_limit = 10000
 
 ######################################################
 ## Backtesting Parameters
@@ -31,15 +32,24 @@ signals = {}
 ma_history = {
     '5': pd.DataFrame(columns=range(nInst)),
     '10': pd.DataFrame(columns=range(nInst)),
+    '15': pd.DataFrame(columns=range(nInst)),
     '20': pd.DataFrame(columns=range(nInst)),
     '30': pd.DataFrame(columns=range(nInst)),
     '60': pd.DataFrame(columns=range(nInst)),
+    '100': pd.DataFrame(columns=range(nInst)),
     '180': pd.DataFrame(columns=range(nInst))
 }
 
-signals['5_20'] = pd.DataFrame(columns=range(nInst))
 signals['10_60'] = pd.DataFrame(columns=range(nInst))
-signals['30_60'] = pd.DataFrame(columns=range(nInst))
+signals['30_180'] = pd.DataFrame(columns=range(nInst))
+
+
+# Blinger Bands
+bollinger_band = {
+    'mid': pd.DataFrame(columns=range(nInst)),
+    'upper': pd.DataFrame(columns=range(nInst)),
+    'lower': pd.DataFrame(columns=range(nInst))
+}
 #####################################################
 
 
@@ -47,85 +57,55 @@ def getMyPosition(prcSoFar: np.ndarray) -> np.ndarray:
     # update the position based on the latest prices
     global currentPos, signals, ma_history, trading_logs
     update_ma_history(prcSoFar)
+    update_bollinger_bands(prcSoFar)
     update_ma_signal(prcSoFar)
-
-    # currentPos = ma_strategy_using_signals(prcSoFar, signal_key='30_180', dollar_limit=10000)
 
     currentPos = ma_strategy(prcSoFar, dollar_limit=cash_limit)
 
+    update_trading_logs(prcSoFar)
+
     return currentPos
 
-# def ma_strategy_using_signals(prcSoFar: np.ndarray, signal_key: str = '30_180', dollar_limit: float = 10000) -> np.ndarray:
-#     if len(signals[signal_key]) == 0:
-#         return np.zeros(prcSoFar.shape[0])
 
-#     latest_signal = signals[signal_key].iloc[-1].values
-#     cur_price = prcSoFar[:, -1]
-#     position = (latest_signal * dollar_limit / cur_price).astype(int)
-
-#     return position
-
-def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 10000) -> np.ndarray:
-    global currentPos, signals, ma_history
+def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 2000) -> np.ndarray:
+    global currentPos, signals, ma_history, dollar_position_limit
 
     (n_inst, n_days) = prcSoFar.shape
     last_prices = prcSoFar[:, -1]
-    
 
-    # Get signals
+    final_signal = np.sum(
+    np.stack([df.iloc[-1].values for df in signals.values()]),
+    axis=0
+    )
 
-    # all_signals = []
-    # for signal_key in signals:
-    #     if len(signals[signal_key]) > 0:
-    #         all_signals.append(signals[signal_key].iloc[-1].values)
-    # all_signals = np.array(all_signals)
+    current_position = currentPos.copy()
+    pos_value = np.abs(current_position * last_prices)
 
-    # final_signal = np.zeros(n_inst)
-    # for signal_key in signals.keys():
-    #     final_signal += signals[signal_key].iloc[-1].values
+    # 每支股票剩余可投入金额
+    remaining_cash_per_stock = np.clip(dollar_position_limit - pos_value, 0, None)
+    max_share = (remaining_cash_per_stock / last_prices).astype(int)
 
-    all_signals = np.array([
-        signals[key].iloc[-1].values for key in signals if len(signals[key]) > 0
-    ])
+    # Calculate the target position based on the final signal
+    target_position = (final_signal * max_share).astype(int)
+    target_position = np.clip(target_position, -max_share, max_share)
 
-    max_signal = np.max(all_signals, axis=0)
-    min_signal = np.min(all_signals, axis=0)
+    if len(bollinger_band['upper']) > 0:
+        price = last_prices
+        upper = bollinger_band['upper'].iloc[-1].values
+        lower = bollinger_band['lower'].iloc[-1].values
 
-    # Update current position based on the signal
-    # Use last day prices to estimate the postion
-    # currentPos += final_signal * (dollar_limit / last_prices).astype(int)
+        # 多仓被打穿下轨 → 止损
+        target_position[(current_position > 0) & (price <= lower)] = 0
 
-    new_position = currentPos.copy()
+        # 空仓突破上轨 → 止损
+        target_position[(current_position < 0) & (price >= upper)] = 0
 
-    unit = (dollar_limit / last_prices).astype(int)
+    for i in range(n_inst):
+        if i not in ma_stock_id:
+            target_position[i] = 0
 
-    # 做空：如果 min_signal == -1
-    short_mask = (min_signal == -1)
-    long_mask = (max_signal == 1)
+    return target_position
 
-    # 如果当前是多仓 → 清仓并做空
-    reverse_mask = short_mask & (currentPos > 0)
-    new_position[reverse_mask] = -unit[reverse_mask]
-
-    # 如果已经是空仓 → 继续加空
-    add_short_mask = short_mask & (currentPos <= 0)
-    new_position[add_short_mask] -= unit[add_short_mask]
-
-    # 做多：加仓（包括之前是多仓或空仓时直接加）
-    new_position[long_mask] += unit[long_mask]
-
-    return new_position
-
-    # resultPosition = np.zeros(n_inst)
-    # if np.any(all_signals == -1):
-    #     signal = -1 * np.ones(n_inst)
-    #     resultPosition = (signal * dollar_limit / last_prices).astype(int)
-    # elif np.any(all_signals == 1):
-    #     signal = 1 * np.ones(n_inst)
-    #     resultPosition = (signal * dollar_limit / last_prices).astype(int)
-    # else:
-    #     resultPosition = currentPos
-    # return resultPosition
 
 #####################################################################################
 # Update trading logs
@@ -157,7 +137,7 @@ def update_cash_history(prcSoFar: np.ndarray):
     """
     global trading_logs, currentPos
     if len(trading_logs['position_history']) < 2:
-    # 初始化第一天：仓位差为 pos[1] - pos[0]，但无法计算净值
+    # Initialization
         trading_logs['cash_history'].loc[len(trading_logs['cash_history'])] = np.zeros(nInst)
         return
     # Calculate the cash based on the current position
@@ -227,7 +207,41 @@ def update_ma_signal(prcSoFar:np.array):
         signal[gold_cross] = 1
         signal[death_cross] = -1
 
+        # Blinger Bands Filter
+        if len(bollinger_band['upper']) > 0:
+            price = prcSoFar[:, -1]
+            upper_band = bollinger_band['upper'].iloc[-1].values
+            lower_band = bollinger_band['lower'].iloc[-1].values
+
+            # 多信号 + 价格过高（>= 上轨）→ 无效
+            signal[(signal > 0) & (price >= upper_band)] = 0
+            # 空信号 + 价格过低（<= 下轨）→ 无效
+            signal[(signal < 0) & (price <= lower_band)] = 0
+
         signals[key].loc[len(signals[key])] = signal
+
+########################################################################################
+# Bollinger Bands
+########################################################################################
+
+def update_bollinger_bands(prcSoFar: np.ndarray, window: int = 20, num_std: float = 2.0):
+    """
+    Update the Bollinger Bands for the given prices.
+    """
+    global bollinger_band
+
+    prc_so_far = prcSoFar.copy()
+    (n_inst, n_days) = prc_so_far.shape
+
+    if n_days < window + 1:
+        return
+
+    mid_band = np.mean(prc_so_far[:, -window:], axis=1)
+    std_dev = np.std(prc_so_far[:, -window:], axis=1)
+
+    bollinger_band['mid'].loc[len(bollinger_band['mid'])] = mid_band
+    bollinger_band['upper'].loc[len(bollinger_band['upper'])] = mid_band + num_std * std_dev
+    bollinger_band['lower'].loc[len(bollinger_band['lower'])] = mid_band - num_std * std_dev
 
 #######################################################################################
 # Return functions for history and signals
