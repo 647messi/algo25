@@ -10,7 +10,7 @@ currentPos = np.zeros(nInst)
 ma_signal_history = None
 ma_stock_id = [2,5,8,15,16,18,29,30,34,41,46]
 
-cash_limit = 2000
+cash_limit = 5000
 commRate = 0.0005
 dollar_position_limit = 10000
 
@@ -67,7 +67,7 @@ def getMyPosition(prcSoFar: np.ndarray) -> np.ndarray:
     return currentPos
 
 
-def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 2000) -> np.ndarray:
+def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 5000) -> np.ndarray:
     global currentPos, signals, ma_history, dollar_position_limit
 
     (n_inst, n_days) = prcSoFar.shape
@@ -197,6 +197,11 @@ def update_ma_signal(prcSoFar:np.array):
         ma_long = np.mean(prc_so_far[:, -long_window:], axis=1)
 
         curr = np.sign(ma_short - ma_long)
+
+        if len(ma_history[str(short_window)]) < 2 or len(ma_history[str(long_window)]) < 2:
+            signals[key].loc[len(signals[key])] = np.zeros(n_inst)
+            continue
+
         # Because we already updated ma_history in the function called before this, we use -2 as index
         prev = np.sign(ma_history[str(short_window)].iloc[-2].values - ma_history[str(long_window)].iloc[-2].values)
 
