@@ -17,7 +17,7 @@ def loadPrices(fn):
     return (df.values).T
 
 # Modify the file path as needed
-pricesFile="./prices.txt"
+pricesFile="./prices2.txt"
 prcAll = loadPrices(pricesFile)
 print ("Loaded %d instruments for %d days" % (nInst, nt))
 

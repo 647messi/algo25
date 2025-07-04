@@ -8,13 +8,13 @@ import pandas as pd
 nInst = 50
 currentPos = np.zeros(nInst)
 ma_signal_history = None
-ma_stock_id = [1,5,8,12,15,16,18,29,30,34,46]
+core_stock_id = {1,5,8,12,15,16,18,29,30,34,46}
 # Signal Count
 signal_count = np.zeros(nInst, dtype=int)      # 连续同方向信号数
 last_signal_dir = np.zeros(nInst, dtype=int)   # 上次信号方向
 
 
-cash_limit = 1000
+cash_limit = 2000
 commRate = 0.0005
 dollar_position_limit = 10000
 
@@ -34,13 +34,9 @@ trading_logs = {
 
 signals = {
     'ma_signals': {
-        #'2_5': pd.DataFrame(columns=range(nInst)),
-        #'2_10': pd.DataFrame(columns=range(nInst)),
-        #'2_15': pd.DataFrame(columns=range(nInst)),
         '5_15': pd.DataFrame(columns=range(nInst)),
         '5_20': pd.DataFrame(columns=range(nInst)),
         '5_30': pd.DataFrame(columns=range(nInst)),
-        #'5_60': pd.DataFrame(columns=range(nInst)),
         '10_30': pd.DataFrame(columns=range(nInst)),
         '10_60': pd.DataFrame(columns=range(nInst)),
         '10_90': pd.DataFrame(columns=range(nInst)),
@@ -61,7 +57,6 @@ signals = {
     # }
 }
 ma_history = {
-    '2': pd.DataFrame(columns=range(nInst)),
     '5': pd.DataFrame(columns=range(nInst)),
     '10': pd.DataFrame(columns=range(nInst)),
     '15': pd.DataFrame(columns=range(nInst)),
@@ -81,45 +76,53 @@ rsi_history = {
 
 
 
-# Blinger Bands
+# Bollinger Bands
 bollinger_band = {
     'mid': pd.DataFrame(columns=range(nInst)),
     'upper': pd.DataFrame(columns=range(nInst)),
     'lower': pd.DataFrame(columns=range(nInst))
 }
-#####################################################
+
+######################################################
+## Strategies
+######################################################
 
 
 def getMyPosition(prcSoFar: np.ndarray) -> np.ndarray:
-    # update the position based on the latest prices
-    global currentPos, signals, ma_history, trading_logs, cash_limit
+    global currentPos, signals, ma_history, trading_logs, cash_limit, dynamic_stock_pool, core_stock_id
+    
     update_ma_history(prcSoFar)
     update_bollinger_bands(prcSoFar)
     update_ma_signal(prcSoFar)
-
-    currentPos = ma_strategy(prcSoFar, dollar_limit=cash_limit)
-
+    
+    pos_ma = ma_strategy(prcSoFar, dollar_limit=cash_limit)
+    # pos_brs = bollinger_reversal_strategy(prcSoFar)
+    
+    currentPos = pos_ma
     update_trading_logs(prcSoFar)
-
     return currentPos
 
 
-def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 5000) -> np.ndarray:
+#############################################################
+# MA Strategy
+
+def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 6000) -> np.ndarray:
     global currentPos, signals, signal_count, last_signal_dir
 
-    (n_inst, n_days) = prcSoFar.shape
     last_prices = prcSoFar[:, -1]
 
     # 汇总所有 ma_signals
-    final_signal = np.sum(
-        np.stack([df.iloc[-1].values for df in signals['ma_signals'].values()]),
-        axis=0
-    )
+    regime = detect_market_regime(prcSoFar)
+    selected_keys = get_filtered_ma_signals(regime)
+
+    final_signal = np.zeros(nInst)
+    for key in selected_keys:
+        final_signal += signals['ma_signals'][key].iloc[-1].values
 
     current_position = currentPos.copy()
     target_position = current_position.copy()
 
-    for i in range(n_inst):
+    for i in range(nInst):
         signal = int(np.sign(final_signal[i]))  # 当前信号方向
         last_dir = last_signal_dir[i]
         price = last_prices[i]
@@ -131,16 +134,23 @@ def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 5000) -> np.ndarray:
 
         # 同方向累积信号：增加 count
         if signal != 0:
-            signal_count[i] += 1  # 新方向开始累积
+            if signal != last_signal_dir[i]:
+                signal_count[i] = 1  # 新方向开始
+            else:
+                signal_count[i] += 1  # 新方向开始累积
 
+            # Apply Sigmoid Function to calculate signal strength
             base_unit = cash_limit / price
-            k = 1.4       # 增速
-            x0 = 3     # 中心位置，越小越早拉满
-            max_mult = 8  # 最大放大倍数
+            a = 1.2
+            b = 4
+            max_mult = 5
 
-            multiplier = (np.tanh(k * ( - x0)) + 1) / 2 * max_mult
+            multiplier = ((1 - np.exp(-a * signal_count[i])) ** b) * max_mult
+            # multiplier = signal_count[i]
 
-            pos = round(signal * base_unit * signal_count[i])
+            pos = round(signal * base_unit * multiplier)
+
+            # pos = round(signal * base_unit * signal_count[i])
             target_position[i] = pos
 
             last_signal_dir[i] = signal
@@ -157,8 +167,54 @@ def ma_strategy(prcSoFar: np.ndarray, dollar_limit: float = 5000) -> np.ndarray:
         target_position[(current_position < 0) & (price <= lower * 0.98)] = 0
 
     # 股票池限制
-    for i in range(n_inst):
-        if i not in ma_stock_id:
+    for i in range(nInst):
+        if i not in core_stock_id:
+            target_position[i] = 0
+
+    return target_position
+
+#############################################################
+# Bollinger Reversal Strategy
+#############################################################
+
+def bollinger_reversal_strategy(prcSoFar: np.ndarray, dollar_limit: float = 1000) -> np.ndarray:
+    global bollinger_band, currentPos, dynamic_stock_pool
+
+    last_prices = prcSoFar[:, -1]
+    current_position = currentPos.copy()
+    target_position = np.zeros_like(current_position)
+
+    if len(bollinger_band['upper']) == 0:
+        return target_position  # 没有布林带数据，不操作
+
+
+    upper = bollinger_band['upper'].iloc[-1].values
+    lower = bollinger_band['lower'].iloc[-1].values
+    mid = bollinger_band['mid'].iloc[-1].values
+
+    active_flags = is_active(prcSoFar)
+
+    for i in range(nInst):
+        if not active_flags[i]:
+            continue  # 跳过不活跃的股票
+
+        price = last_prices[i]
+
+        if price < lower[i]:
+            target_position[i] = 0
+        elif current_position[i] == 0 and price >= lower[i] and price < mid[i]:
+            shares = int(dollar_limit / price)
+            target_position[i] = shares
+
+        elif price > upper[i]:
+            target_position[i] = 0
+        elif current_position[i] == 0 and price <= upper[i] and price > mid[i]:
+            shares = int(dollar_limit / price)
+            target_position[i] = -shares
+
+        if current_position[i] > 0 and price >= mid[i]:
+            target_position[i] = 0
+        if current_position[i] < 0 and price <= mid[i]:
             target_position[i] = 0
 
     return target_position
@@ -268,17 +324,6 @@ def update_ma_signal(prcSoFar:np.array):
         signal[gold_cross] = 1
         signal[death_cross] = -1
 
-        # # Blinger Bands Filter
-        # if len(bollinger_band['upper']) > 0:
-        #     price = prcSoFar[:, -1]
-        #     upper_band = bollinger_band['upper'].iloc[-1].values
-        #     lower_band = bollinger_band['lower'].iloc[-1].values
-
-        #     # 多信号 + 价格过高（>= 上轨）→ 无效
-        #     signal[(signal > 0) & (price >= upper_band)] = 0
-        #     # 空信号 + 价格过低（<= 下轨）→ 无效
-        #     signal[(signal < 0) & (price <= lower_band)] = 0
-
         ma_signals[key].loc[len(ma_signals[key])] = signal
 
 ########################################################################################
@@ -352,3 +397,37 @@ def reset_logs():
             signals[key][k] = pd.DataFrame(columns=range(nInst))
 
     ma_signal_history = None
+
+#######################################################################################
+# Detect Market Regime
+
+def detect_market_regime(prcSoFar: np.ndarray, window: int = 20, lookback: int = 15) -> int:
+    global bollinger_band
+
+    if len(bollinger_band['upper']) < lookback:
+        return 0  # 数据不够，保持中性
+
+    upper = np.stack(bollinger_band['upper'].iloc[-lookback:].values)
+    lower = np.stack(bollinger_band['lower'].iloc[-lookback:].values)
+    width_hist = np.mean(upper - lower, axis=1)
+
+    latest_width = np.mean(bollinger_band['upper'].iloc[-1].values - bollinger_band['lower'].iloc[-1].values)
+
+    q_high = np.quantile(width_hist, 0.80)
+    q_low = np.quantile(width_hist, 0.20)
+
+    if latest_width > q_high:
+        return 1  # trend
+    elif latest_width < q_low:
+        return -1  # sideways
+    else:
+        return 0  # neutral
+
+    
+def get_filtered_ma_signals(regime: int) -> list:
+    all_keys = list(signals['ma_signals'].keys())
+    if regime <= 0:
+        # 非趋势期：去除短线
+        return [key for key in all_keys if not key.startswith('5_')]
+    else:
+        return all_keys
