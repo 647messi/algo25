@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-from VIVO50 import getMyPosition as getPosition
+from main import getMyPosition as getPosition
 
 
 nInst = 0
@@ -17,7 +17,7 @@ def loadPrices(fn):
     return (df.values).T
 
 # Modify the file path as needed
-pricesFile="./prices2.txt"
+pricesFile="./prices.txt"
 prcAll = loadPrices(pricesFile)
 print ("Loaded %d instruments for %d days" % (nInst, nt))
 
