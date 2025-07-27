@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-from VIVO50 import getMyPosition as getPosition
+from main import getMyPosition as getPosition
 
 
 nInst = 0
@@ -55,7 +55,7 @@ def calcPL(prcHist, numTestDays):
         if (totDVolume > 0):
             ret = value / totDVolume
         if (t > startDay):
-            print ("Day %d value: %.2lf todayPL: $%.2lf $-traded: %.0lf return: %.5lf" % (t,value, todayPL, totDVolume, ret))
+            # print ("Day %d value: %.2lf todayPL: $%.2lf $-traded: %.0lf return: %.5lf" % (t,value, todayPL, totDVolume, ret))
             todayPLL.append(todayPL)
     pll = np.array(todayPLL)
     (plmu,plstd) = (np.mean(pll), np.std(pll))
@@ -66,12 +66,12 @@ def calcPL(prcHist, numTestDays):
 
 
 
-# (meanpl, ret, plstd, sharpe, dvol) = calcPL(prcAll, 750)
-# score = meanpl - 0.1*plstd
-# print ("=====")
-# print ("mean(PL): %.1lf" % meanpl)
-# print ("return: %.5lf" % ret)
-# print ("StdDev(PL): %.2lf" % plstd)
-# print ("annSharpe(PL): %.2lf " % sharpe)
-# print ("totDvolume: %.0lf " % dvol)
-# print ("Score: %.2lf" % score)
+(meanpl, ret, plstd, sharpe, dvol) = calcPL(prcAll, 250)
+score = meanpl - 0.1*plstd
+print ("=====")
+print ("mean(PL): %.1lf" % meanpl)
+print ("return: %.5lf" % ret)
+print ("StdDev(PL): %.2lf" % plstd)
+print ("annSharpe(PL): %.2lf " % sharpe)
+print ("totDvolume: %.0lf " % dvol)
+print ("Score: %.2lf" % score)
